@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Osculating Circle Explorer</title>
+<style>
+  :root{--bg:#0b0e14;--panel:rgba(20,24,34,0.82);--txt:#e8ecf4;--sub:#8b93a7;--accentT:#ff453a;--accentN:#32d74b;--accentC:#4da6ff;}
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden;
+    padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+  #c{position:fixed;inset:0;display:block;touch-action:none;}
+  .panel{position:fixed;background:var(--panel);backdrop-filter:blur(10px);border-radius:14px;padding:12px 14px;border:1px solid rgba(255,255,255,0.08);}
+  #curves{top:calc(14px + env(safe-area-inset-top,0px));left:14px;display:flex;gap:6px;flex-wrap:wrap;max-width:min(90vw,520px);}
+  #curves button{background:rgba(255,255,255,0.06);color:var(--txt);border:1px solid rgba(255,255,255,0.1);border-radius:9px;padding:8px 12px;font-size:13px;cursor:pointer;transition:background .15s;}
+  #curves button:hover{background:rgba(255,255,255,0.14);}
+  #curves button.active{background:var(--accentC);color:#04101f;font-weight:600;border-color:transparent;}
+  #legend{top:calc(70px + env(safe-area-inset-top,0px));left:14px;font-size:12px;color:var(--sub);line-height:1.9;}
+  #legend span{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+  #controls{bottom:calc(14px + env(safe-area-inset-bottom,0px));left:14px;right:14px;display:flex;align-items:center;gap:10px;max-width:560px;}
+  #controls input[type=range]{flex:1;accent-color:var(--accentC);}
+  #playBtn{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);color:var(--txt);border-radius:9px;width:38px;height:38px;font-size:15px;cursor:pointer;}
+  #meter{bottom:calc(14px + env(safe-area-inset-bottom,0px));right:14px;width:190px;text-align:right;}
+  #meter .lbl{font-size:11px;color:var(--sub);letter-spacing:.04em;text-transform:uppercase;}
+  #meter .val{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--accentC);}
+  #meter .bar{margin-top:8px;height:6px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden;}
+  #meter .bar div{height:100%;background:linear-gradient(90deg,#4da6ff,#7fd1ff);width:0%;transition:width .1s linear;}
+  @media (max-width:480px){#legend{display:none;} #curves{max-width:92vw;} #meter{width:150px;}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="panel" id="curves"></div>
+<div class="panel" id="legend">
+  <div><span style="background:var(--accentT)"></span>Tangent T</div>
+  <div><span style="background:var(--accentN)"></span>Normal N</div>
+  <div><span style="background:var(--accentC)"></span>Osculating circle</div>
+</div>
+<div class="panel" id="controls">
+  <button id="playBtn">⏸</button>
+  <input id="tSlider" type="range" min="0" max="1000" value="0">
+</div>
+<div class="panel" id="meter">
+  <div class="lbl">Osculating radius</div>
+  <div class="val" id="rVal">–</div>
+  <div class="bar"><div id="rBar"></div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  // ---------- curve definitions ----------
+  const CURVES = [
+    { name:'Helix', range:[0,4*Math.PI], closed:false,
+      f:(t)=> new THREE.Vector3(1.3*Math.cos(t), 0.32*t-2.0, 1.3*Math.sin(t)) },
+    { name:'Trefoil Knot', range:[0,2*Math.PI], closed:true,
+      f:(t)=> new THREE.Vector3(0.8*(Math.sin(t)+2*Math.sin(2*t)),0.8*(Math.cos(t)-2*Math.cos(2*t)),0.8*(-Math.sin(3*t))) },
+    { name:"Viviani's Curve", range:[0,4*Math.PI], closed:true,
+      f:(t)=> { const a=1.35; return new THREE.Vector3(a*(1+Math.cos(t))-a, a*Math.sin(t), 2*a*Math.sin(t/2)); } },
+    { name:'3D Lissajous', range:[0,2*Math.PI], closed:true,
+      f:(t)=> new THREE.Vector3(1.7*Math.sin(2*t), 1.5*Math.sin(3*t), 1.3*Math.cos(t)) }
+  ];
+  let cur = 0, dir = 1;
+
+  // ---------- scene ----------
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0e14);
+  const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100);
+  const renderer = new THREE.WebGLRenderer({canvas:document.getElementById('c'), antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth, innerHeight);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.9); dl.position.set(4,6,5); scene.add(dl);
+  const dl2 = new THREE.DirectionalLight(0x88aaff, 0.35); dl2.position.set(-5,-3,-4); scene.add(dl2);
+  scene.add(new THREE.GridHelper(8,16,0x2a3142,0x1a1f2b));
+
+  // camera orbit (manual)
+  let camTheta=0.9, camPhi=1.05, camRadius=8, dragging=false, lastX=0,lastY=0;
+  function updateCamera(){
+    camera.position.set(camRadius*Math.sin(camPhi)*Math.sin(camTheta), camRadius*Math.cos(camPhi), camRadius*Math.sin(camPhi)*Math.cos(camTheta));
+    camera.lookAt(0,0,0);
+  }
+  const c = renderer.domElement;
+  c.addEventListener('pointerdown', e=>{dragging=true; lastX=e.clientX; lastY=e.clientY;});
+  addEventListener('pointerup', ()=>dragging=false);
+  addEventListener('pointermove', e=>{
+    if(!dragging) return;
+    camTheta -= (e.clientX-lastX)*0.006;
+    camPhi = Math.min(Math.max(camPhi-(e.clientY-lastY)*0.006,0.15),Math.PI-0.15);
+    lastX=e.clientX; lastY=e.clientY; updateCamera();
+  });
+  c.addEventListener('wheel', e=>{camRadius=Math.min(Math.max(camRadius+e.deltaY*0.01,3),20); updateCamera(); e.preventDefault();},{passive:false});
+  updateCamera();
+
+  // ---------- curve path (custom THREE.Curve) ----------
+  class ParamCurve extends THREE.Curve{
+    constructor(def){super(); this.def=def;}
+    getPoint(u, target){
+      const s = this.def.range[0] + (this.def.range[1]-this.def.range[0])*u;
+      const p = this.def.f(s);
+      return target ? target.copy(p) : p.clone();
+    }
+  }
+
+  let tubeMesh=null, markerMesh, tArrow, nArrow, circleLine;
+  const circleSegs=64;
+
+  function buildCurve(idx){
+    if(tubeMesh){ scene.remove(tubeMesh); tubeMesh.geometry.dispose(); tubeMesh.material.dispose(); }
+    const def = CURVES[idx];
+    const path = new ParamCurve(def);
+    const geo = new THREE.TubeGeometry(path, 300, 0.032, 10, def.closed);
+    const mat = new THREE.MeshStandardMaterial({color:0x6b7bff, roughness:0.4, metalness:0.15, emissive:0x11142a});
+    tubeMesh = new THREE.Mesh(geo, mat);
+    scene.add(tubeMesh);
+  }
+
+  markerMesh = new THREE.Mesh(new THREE.SphereGeometry(0.07,20,20), new THREE.MeshStandardMaterial({color:0xffffff, emissive:0x333333}));
+  scene.add(markerMesh);
+
+  tArrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(), 1.1, 0xff453a, 0.18, 0.09);
+  nArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(), 1.1, 0x32d74b, 0.18, 0.09);
+  scene.add(tArrow, nArrow);
+
+  const circleGeo = new THREE.BufferGeometry();
+  const circlePos = new Float32Array((circleSegs+1)*3);
+  circleGeo.setAttribute('position', new THREE.BufferAttribute(circlePos,3));
+  circleLine = new THREE.Line(circleGeo, new THREE.LineBasicMaterial({color:0x4da6ff, transparent:true, opacity:0.9}));
+  scene.add(circleLine);
+
+  // ---------- Frenet frame via finite differences ----------
+  function frenet(def, s){
+    const range = def.range[1]-def.range[0];
+    const h = range*1e-4;
+    const p0=def.f(s-h), p1=def.f(s), p2=def.f(s+h);
+    const r1 = p2.clone().sub(p0).multiplyScalar(1/(2*h));
+    const r2 = p2.clone().add(p0).sub(p1.clone().multiplyScalar(2)).multiplyScalar(1/(h*h));
+    const speed = r1.length() || 1e-9;
+    const T = r1.clone().normalize();
+    const cross = new THREE.Vector3().crossVectors(r1,r2);
+    const kappa = cross.length()/Math.pow(speed,3);
+    const radius = kappa>1e-5 ? 1/kappa : 999;
+    const r2par = T.clone().multiplyScalar(r2.dot(T));
+    const nvec = r2.clone().sub(r2par);
+    const N = nvec.lengthSq()>1e-9 ? nvec.normalize() : new THREE.Vector3(0,1,0);
+    return {point:p1, T, N, radius:Math.min(radius,999)};
+  }
+
+  function updateFrame(u){
+    const def = CURVES[cur];
+    const s = def.range[0] + (def.range[1]-def.range[0])*u;
+    const fr = frenet(def, s);
+    markerMesh.position.copy(fr.point);
+    tArrow.position.copy(fr.point); tArrow.setDirection(fr.T);
+    nArrow.position.copy(fr.point); nArrow.setDirection(fr.N);
+
+    const center = fr.point.clone().add(fr.N.clone().multiplyScalar(fr.radius));
+    const pos = circleLine.geometry.attributes.position.array;
+    for(let i=0;i<=circleSegs;i++){
+      const th = (i/circleSegs)*Math.PI*2;
+      const pt = center.clone()
+        .add(fr.N.clone().multiplyScalar(-Math.cos(th)*fr.radius))
+        .add(fr.T.clone().multiplyScalar(Math.sin(th)*fr.radius));
+      pos[i*3]=pt.x; pos[i*3+1]=pt.y; pos[i*3+2]=pt.z;
+    }
+    circleLine.geometry.attributes.position.needsUpdate = true;
+
+    document.getElementById('rVal').textContent = fr.radius>=999 ? '∞' : fr.radius.toFixed(2);
+    document.getElementById('rBar').style.width = Math.min(fr.radius/5,1)*100+'%';
+  }
+
+  // ---------- UI ----------
+  const curveBar = document.getElementById('curves');
+  CURVES.forEach((d,i)=>{
+    const b=document.createElement('button');
+    b.textContent=d.name;
+    if(i===0) b.classList.add('active');
+    b.onclick=()=>{ cur=i; document.querySelectorAll('#curves button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); buildCurve(cur); };
+    curveBar.appendChild(b);
+  });
+
+  const slider = document.getElementById('tSlider');
+  let u = 0, playing = true;
+  slider.addEventListener('input', ()=>{ u = slider.value/1000; playing=false; playBtn.textContent='▶'; updateFrame(u); });
+  const playBtn = document.getElementById('playBtn');
+  playBtn.onclick = ()=>{ playing=!playing; playBtn.textContent = playing ? '⏸' : '▶'; };
+
+  buildCurve(cur);
+  updateFrame(0);
+
+  function onResize(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
+  addEventListener('resize', onResize);
+
+  let last=performance.now();
+  function animate(now){
+    const dt=Math.min((now-last)/1000,0.05); last=now;
+    if(playing){
+      u += dir*dt*0.09;
+      if(!CURVES[cur].closed){ if(u>1){u=1;dir=-1;} if(u<0){u=0;dir=1;} }
+      else { if(u>1)u-=1; if(u<0)u+=1; }
+      slider.value = Math.round(u*1000);
+      updateFrame(u);
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
